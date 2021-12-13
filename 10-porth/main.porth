@@ -1,0 +1,223 @@
+include "std.porth"
+
+const BUFFER_CAP 1024 end
+memory fd sizeof(u64) end
+memory buffer BUFFER_CAP end
+memory file_path_cstr sizeof(ptr) end
+memory p1_answer sizeof(u64) end
+memory p2_buffer BUFFER_CAP sizeof(u64) * end
+memory p2_count sizeof(u64) end
+
+// defines syntax score table for closing symbols
+proc syntax_cost int -- int in
+    dup ')' = if
+      drop 3
+    else dup ']' = if*
+      drop 57
+    else dup '}' = if*
+      drop 1197
+    else dup '>' = if*
+      drop 25137
+    else
+      drop 0
+    end
+end
+
+// defines autocomplete score table for closing symbols
+proc autocomplete_cost int -- int in
+    dup ')' = if
+      drop 1
+    else dup ']' = if*
+      drop 2
+    else dup '}' = if*
+      drop 3
+    else dup '>' = if*
+      drop 4
+    else
+      "bad symbol in autocomplete_cost" eputs
+      1 exit 
+    end
+end
+
+// returns matching symbol
+proc get_match int -- int in
+    dup '(' = if
+      drop ')'
+    else dup '[' = if*
+      drop ']'
+    else dup '{' = if*
+      drop '}'
+    else dup '<' = if*
+      drop '>'
+    else
+      "bad symbol in get_match" eputs
+      1 exit 
+    end
+end
+
+// determines whether the given symbol is a closing one
+proc is_closing int -- bool in
+    dup ')' = cast(int) 
+    over ']' = cast(int) or
+    over '}' = cast(int) or
+    over '>' = cast(int) or
+    swap drop cast(bool)
+end
+
+// determines whether top two elements on the stack match each other
+proc match int int -- int in
+    memory result sizeof(u64) end
+
+    over over ')' = cast(int) swap '(' = cast(int) and result !64
+    over over ']' = cast(int) swap '[' = cast(int) and result @64 or result !64
+    over over '}' = cast(int) swap '{' = cast(int) and result @64 or result !64
+    over over '>' = cast(int) swap '<' = cast(int) and result @64 or result !64
+    drop drop result @64
+end 
+
+// calculates autocomplete score for characters that remain on the stack
+proc autocomplete int -- int in
+  memory score sizeof(u64) end
+  memory size sizeof(u64) end
+
+  size !64
+  0 score !64
+  while size @64 0 > do    
+    dup is_closing
+    if 
+      match 1 != if
+        "brackets did not match for incomplete sequence" eputs
+        1 exit
+      end
+
+      size dec64
+      size dec64
+    else
+      get_match
+      autocomplete_cost
+      score @64 5 * +
+      score !64
+
+      size dec64
+    end
+  end
+
+  score @64
+end
+
+// checks whether string is a valid sequence
+// also returns 0 or first bad char if sequence is not valid
+// also returns autocomplete score if the string is incomplete
+proc check int ptr -- int int in
+    memory data sizeof(ptr) end
+    memory size sizeof(u64) end
+    memory valid sizeof(u64) end
+    memory badchar sizeof(u64) end
+    memory stack_size sizeof(u64) end
+
+    data !ptr
+    size !64
+    1 valid !64
+    0 badchar !64
+    0 stack_size !64
+
+    while size @64 1 > do
+      data @ptr @8
+      stack_size inc64
+      dup is_closing if
+        swap over match
+        dup
+        valid @64 and 
+        valid !64 
+        cast(bool) if
+          drop
+          stack_size dec64
+          stack_size dec64
+        else badchar @64 0 > if*
+          drop
+        else
+          badchar !64
+        end
+      end      
+
+      data inc64
+      size dec64
+    end
+    
+    valid @64 1 = if
+      stack_size @64 autocomplete
+
+      valid @64 
+    else
+      badchar @64 valid @64
+    end
+end
+
+proc p2_push_score int in
+  p2_count @64 sizeof(u64) * p2_buffer +ptr !64
+  p2_count inc64
+end
+
+// stolen from /examples/bubble-sort.porth
+proc p2_sort in
+  memory i sizeof(u64) end
+
+  p2_count @64 1 - i !64
+  while i @64 1 > do
+    0 while dup i @64 < do
+      dup   sizeof(u64) * p2_buffer +ptr @64
+      i @64 sizeof(u64) * p2_buffer +ptr @64
+      > if
+        dup   sizeof(u64) * p2_buffer +ptr
+        i @64 sizeof(u64) * p2_buffer +ptr
+        swap64
+      end
+      1 +
+    end drop
+    i dec64
+  end
+end
+
+proc p2_middle -- int in
+  p2_count @64 1 - 2 / sizeof(u64) * p2_buffer +ptr @64
+end
+
+argc 2 != if
+  "USAGE: ./main <filename>\n" eputs
+  1 exit
+end
+
+1 nth_argv file_path_cstr !ptr
+
+0 O_RDONLY file_path_cstr @ptr AT_FDCWD openat
+
+dup 0 < if
+  "ERROR: could not open file " eputs
+  file_path_cstr @ptr cstr-to-str eputs
+  "\n" eputs
+else
+  fd !64
+  while BUFFER_CAP buffer fd @64 read dup 0 > do
+    buffer 
+    check 
+    cast(bool) if
+      p2_push_score
+    else
+      syntax_cost p1_answer @64 + 
+      p1_answer !64
+    end
+  end
+
+  "Answer to Part 1: " puts
+  p1_answer @64 print
+
+  "Answer to Part 2: " puts
+  p2_sort
+  p2_middle print
+
+  fd @64
+end
+
+close drop
+
+
